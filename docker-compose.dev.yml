@@ -1,0 +1,268 @@
+version: '3.8'
+
+services:
+  # Development Frontend with Hot Reload
+  frontend-dev:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_WS_URL=ws://localhost:8000/ws
+      - FAST_REFRESH=true
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    stdin_open: true
+    tty: true
+    networks:
+      - min-ai-cad-dev
+
+  # Development API Gateway with Auto-reload
+  api-gateway-dev:
+    build:
+      context: ./backend/services/api_gateway
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres-dev:5432/min_ai_cad_dev
+      - REDIS_URL=redis://redis-dev:6379/0
+      - FILE_PROCESSOR_URL=http://file-processor-dev:8001
+      - NLP_SERVICE_URL=http://nlp-service-dev:8002
+      - CAD_ENGINE_URL=http://cad-engine-dev:8003
+      - ASSEMBLY_GENERATOR_URL=http://assembly-generator-dev:8004
+      - ENVIRONMENT=development
+      - DEBUG=true
+    volumes:
+      - ./backend/services/api_gateway:/app
+      - ./backend/shared:/app/shared
+      - ./uploads:/app/uploads
+      - ./exports:/app/exports
+    depends_on:
+      - postgres-dev
+      - redis-dev
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - min-ai-cad-dev
+
+  # Development File Processor
+  file-processor-dev:
+    build:
+      context: ./backend/services/file_processor
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8001:8001"
+    environment:
+      - REDIS_URL=redis://redis-dev:6379/0
+      - ENVIRONMENT=development
+      - DEBUG=true
+    volumes:
+      - ./backend/services/file_processor:/app
+      - ./backend/shared:/app/shared
+      - ./uploads:/app/uploads
+      - ./temp:/app/temp
+    depends_on:
+      - redis-dev
+    command: uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+    networks:
+      - min-ai-cad-dev
+
+  # Development NLP Service
+  nlp-service-dev:
+    build:
+      context: ./backend/services/nlp_service
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8002:8002"
+    environment:
+      - REDIS_URL=redis://redis-dev:6379/0
+      - HUGGING_FACE_TOKEN=${HUGGING_FACE_TOKEN:-}
+      - ENVIRONMENT=development
+      - DEBUG=true
+    volumes:
+      - ./backend/services/nlp_service:/app
+      - ./backend/shared:/app/shared
+      - ./models:/app/models
+    depends_on:
+      - redis-dev
+    command: uvicorn main:app --host 0.0.0.0 --port 8002 --reload
+    networks:
+      - min-ai-cad-dev
+
+  # Development CAD Engine
+  cad-engine-dev:
+    build:
+      context: ./backend/services/cad_engine
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8003:8003"
+    environment:
+      - REDIS_URL=redis://redis-dev:6379/0
+      - FREECAD_PATH=/usr/lib/freecad-python3
+      - ENVIRONMENT=development
+      - DEBUG=true
+    volumes:
+      - ./backend/services/cad_engine:/app
+      - ./backend/shared:/app/shared
+      - ./uploads:/app/uploads
+      - ./exports:/app/exports
+      - ./temp:/app/temp
+    depends_on:
+      - redis-dev
+    command: uvicorn main:app --host 0.0.0.0 --port 8003 --reload
+    networks:
+      - min-ai-cad-dev
+
+  # Development Assembly Generator
+  assembly-generator-dev:
+    build:
+      context: ./backend/services/assembly_generator
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8004:8004"
+    environment:
+      - REDIS_URL=redis://redis-dev:6379/0
+      - DATABASE_URL=postgresql://postgres:password@postgres-dev:5432/min_ai_cad_dev
+      - ENVIRONMENT=development
+      - DEBUG=true
+    volumes:
+      - ./backend/services/assembly_generator:/app
+      - ./backend/shared:/app/shared
+      - ./exports:/app/exports
+      - ./temp:/app/temp
+    depends_on:
+      - redis-dev
+      - postgres-dev
+    command: uvicorn main:app --host 0.0.0.0 --port 8004 --reload
+    networks:
+      - min-ai-cad-dev
+
+  # Development PostgreSQL
+  postgres-dev:
+    image: postgres:15
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_DB=min_ai_cad_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./backend/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - min-ai-cad-dev
+
+  # Development Redis
+  redis-dev:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - min-ai-cad-dev
+
+  # Development Tools
+  
+  # pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4
+    ports:
+      - "5050:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@min-ai-cad.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres-dev
+    networks:
+      - min-ai-cad-dev
+    profiles:
+      - tools
+
+  # Redis Commander for cache management
+  redis-commander:
+    image: rediscommander/redis-commander
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis-dev:6379
+    depends_on:
+      - redis-dev
+    networks:
+      - min-ai-cad-dev
+    profiles:
+      - tools
+
+  # Jupyter notebook for ML/AI development
+  jupyter:
+    build:
+      context: ./backend/services/nlp_service
+      dockerfile: Dockerfile.jupyter
+    ports:
+      - "8888:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=min-ai-cad-dev
+    volumes:
+      - ./backend/services/nlp_service:/home/jovyan/work
+      - ./models:/home/jovyan/models
+      - ./notebooks:/home/jovyan/notebooks
+    networks:
+      - min-ai-cad-dev
+    profiles:
+      - ml-dev
+
+  # File browser for managing uploads/exports
+  filebrowser:
+    image: filebrowser/filebrowser
+    ports:
+      - "8080:80"
+    volumes:
+      - ./uploads:/srv/uploads
+      - ./exports:/srv/exports
+      - ./temp:/srv/temp
+    command: --noauth
+    networks:
+      - min-ai-cad-dev
+    profiles:
+      - tools
+
+  # Test runner service
+  test-runner:
+    build:
+      context: ./
+      dockerfile: Dockerfile.test
+    volumes:
+      - .:/app
+      - ./test-results:/app/test-results
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres-dev:5432/min_ai_cad_test
+      - REDIS_URL=redis://redis-dev:6379/1
+    depends_on:
+      - postgres-dev
+      - redis-dev
+    networks:
+      - min-ai-cad-dev
+    profiles:
+      - testing
+    command: >
+      sh -c "
+        echo 'Running full test suite...' &&
+        python -m pytest backend/tests/ -v --cov=backend --cov-report=html:test-results/backend-coverage &&
+        cd frontend && npm test -- --coverage --coverageDirectory=../test-results/frontend-coverage --watchAll=false
+      "
+
+networks:
+  min-ai-cad-dev:
+    driver: bridge
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+  pgadmin_data:

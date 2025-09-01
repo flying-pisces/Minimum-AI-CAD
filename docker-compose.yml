@@ -1,0 +1,203 @@
+version: '3.8'
+
+services:
+  # Frontend React Application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_WS_URL=ws://localhost:8000/ws
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    depends_on:
+      - api-gateway
+    networks:
+      - min-ai-cad
+
+  # API Gateway Service
+  api-gateway:
+    build:
+      context: ./backend/services/api_gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/min_ai_cad
+      - REDIS_URL=redis://redis:6379/0
+      - FILE_PROCESSOR_URL=http://file-processor:8001
+      - NLP_SERVICE_URL=http://nlp-service:8002
+      - CAD_ENGINE_URL=http://cad-engine:8003
+      - ASSEMBLY_GENERATOR_URL=http://assembly-generator:8004
+    volumes:
+      - ./uploads:/app/uploads
+      - ./exports:/app/exports
+    depends_on:
+      - postgres
+      - redis
+      - file-processor
+      - nlp-service
+      - cad-engine
+      - assembly-generator
+    networks:
+      - min-ai-cad
+
+  # File Processing Service
+  file-processor:
+    build:
+      context: ./backend/services/file_processor
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./uploads:/app/uploads
+      - ./temp:/app/temp
+    depends_on:
+      - redis
+    networks:
+      - min-ai-cad
+
+  # NLP Service
+  nlp-service:
+    build:
+      context: ./backend/services/nlp_service
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - HUGGING_FACE_TOKEN=${HUGGING_FACE_TOKEN:-}
+    volumes:
+      - ./models:/app/models
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - min-ai-cad
+
+  # CAD Engine Service
+  cad-engine:
+    build:
+      context: ./backend/services/cad_engine
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - FREECAD_PATH=/usr/lib/freecad-python3
+    volumes:
+      - ./uploads:/app/uploads
+      - ./exports:/app/exports
+      - ./temp:/app/temp
+    depends_on:
+      - redis
+    networks:
+      - min-ai-cad
+
+  # Assembly Generator Service
+  assembly-generator:
+    build:
+      context: ./backend/services/assembly_generator
+      dockerfile: Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/min_ai_cad
+    volumes:
+      - ./exports:/app/exports
+      - ./temp:/app/temp
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - min-ai-cad
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=min_ai_cad
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - min-ai-cad
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - min-ai-cad
+
+  # Nginx Reverse Proxy (Production)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - frontend
+      - api-gateway
+    networks:
+      - min-ai-cad
+    profiles:
+      - production
+
+  # Monitoring Services (Optional)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - min-ai-cad
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - min-ai-cad
+    profiles:
+      - monitoring
+
+networks:
+  min-ai-cad:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  grafana_data:
