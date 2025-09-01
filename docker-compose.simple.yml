@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # Frontend React Application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    depends_on:
+      - api-gateway
+    stdin_open: true
+    tty: true
+
+  # API Gateway Service
+  api-gateway:
+    build:
+      context: ./backend/services/api_gateway
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - FILE_PROCESSOR_URL=http://file-processor:8001
+      - CAD_ENGINE_URL=http://cad-engine:8003
+    volumes:
+      - ./backend/services/api_gateway:/app
+      - ./backend/shared:/app/shared
+      - ./uploads:/app/uploads
+      - ./exports:/app/exports
+    depends_on:
+      - redis
+      - file-processor
+      - cad-engine
+
+  # File Processing Service
+  file-processor:
+    build:
+      context: ./backend/services/file_processor
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8001:8001"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./backend/services/file_processor:/app
+      - ./uploads:/app/uploads
+    depends_on:
+      - redis
+
+  # CAD Engine Service
+  cad-engine:
+    build:
+      context: ./backend/services/cad_engine
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8003:8003"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./backend/services/cad_engine:/app
+    depends_on:
+      - redis
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+
+volumes:
+  uploads:
+  exports:
