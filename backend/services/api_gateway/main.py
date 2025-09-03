@@ -199,59 +199,131 @@ async def process_assembly(assembly_id: str, part1_id: str, part2_id: str, const
     )
 
 def parse_simple_constraints(constraints_text: str):
-    """Simple constraint parser for MVP"""
+    """Enhanced constraint parser for MVP with more pattern recognition"""
     from models import Constraint
+    import re
     
     constraints = []
-    text = constraints_text.lower()
+    text = constraints_text.lower().strip()
     
-    # Simple distance parsing
-    if "cm" in text or "centimeter" in text:
-        # Extract number before "cm"
-        import re
-        numbers = re.findall(r'(\d+(?:\.\d+)?)\s*cm', text)
-        if numbers:
+    # Distance parsing with multiple units and patterns
+    distance_patterns = [
+        (r'(\d+(?:\.\d+)?)\s*cm(?:s?)\s*(?:apart|distance|spacing)', 10),  # cm to mm conversion
+        (r'(\d+(?:\.\d+)?)\s*mm\s*(?:apart|distance|spacing)', 1),         # mm direct
+        (r'(\d+(?:\.\d+)?)\s*inch(?:es)?\s*(?:apart|distance|spacing)', 25.4),  # inches to mm
+        (r'(\d+(?:\.\d+)?)\s*(?:cm|centimeter)', 10),                      # basic cm
+        (r'(\d+(?:\.\d+)?)\s*(?:mm|millimeter)', 1),                       # basic mm
+        (r'(\d+(?:\.\d+)?)\s*(?:inch|in)', 25.4),                          # basic inches
+    ]
+    
+    for pattern, multiplier in distance_patterns:
+        matches = re.findall(pattern, text)
+        if matches:
+            value = float(matches[0]) * multiplier
             constraints.append(Constraint(
                 type="distance",
-                value=float(numbers[0]) * 10,  # Convert cm to mm
+                value=value,
                 unit="mm",
                 references=["part1", "part2"],
-                confidence=0.8
+                confidence=0.8 if "apart" in text or "distance" in text else 0.7
             ))
+            break
     
-    elif "mm" in text or "millimeter" in text:
-        import re
-        numbers = re.findall(r'(\d+(?:\.\d+)?)\s*mm', text)
-        if numbers:
-            constraints.append(Constraint(
-                type="distance",
-                value=float(numbers[0]),
-                unit="mm",
-                references=["part1", "part2"],
-                confidence=0.8
-            ))
+    # Angle parsing with multiple patterns
+    angle_patterns = [
+        r'(\d+(?:\.\d+)?)\s*(?:degree|degrees|deg|°)',
+        r'(\d+(?:\.\d+)?)\s*(?:degree|deg)\s*(?:angle|rotation)',
+        r'(?:at|with)\s*(\d+(?:\.\d+)?)\s*(?:degree|degrees|°)',
+    ]
     
-    # Simple angle parsing
-    if "degree" in text or "°" in text:
-        import re
-        numbers = re.findall(r'(\d+(?:\.\d+)?)\s*(?:degree|°)', text)
-        if numbers:
+    for pattern in angle_patterns:
+        matches = re.findall(pattern, text)
+        if matches:
             constraints.append(Constraint(
                 type="angle",
-                value=float(numbers[0]),
+                value=float(matches[0]),
                 unit="degrees",
                 references=["part1", "part2"],
                 confidence=0.7
             ))
+            break
     
-    # Default distance if no specific constraint found
-    if not constraints:
+    # Orientation parsing
+    orientation_patterns = [
+        ("vertical|vertically", "vertical"),
+        ("horizontal|horizontally", "horizontal"),
+        ("parallel", "parallel"),
+        ("perpendicular", "perpendicular"),
+    ]
+    
+    for pattern, orientation in orientation_patterns:
+        if re.search(pattern, text):
+            constraints.append(Constraint(
+                type="orientation",
+                value=orientation,
+                unit="",
+                references=["part1", "part2"],
+                confidence=0.6
+            ))
+            break
+    
+    # Connection type parsing
+    connection_patterns = [
+        ("mount|mounting|attach", "mount"),
+        ("connect|connection", "connect"),
+        ("join|joining", "join"),
+        ("bolt|bolted|screw", "bolt"),
+        ("weld|welded", "weld"),
+    ]
+    
+    for pattern, connection_type in connection_patterns:
+        if re.search(pattern, text):
+            constraints.append(Constraint(
+                type="connection",
+                value=connection_type,
+                unit="",
+                references=["part1", "part2"],
+                confidence=0.6
+            ))
+            break
+    
+    # Position/Direction parsing
+    position_patterns = [
+        ("above|on top", "above"),
+        ("below|underneath", "below"),
+        ("beside|next to|adjacent", "beside"),
+        ("center|centered", "center"),
+        ("offset", "offset"),
+    ]
+    
+    for pattern, position in position_patterns:
+        if re.search(pattern, text):
+            constraints.append(Constraint(
+                type="position",
+                value=position,
+                unit="",
+                references=["part1", "part2"],
+                confidence=0.5
+            ))
+            break
+    
+    # Default distance if no distance constraint found
+    has_distance = any(c.type == "distance" for c in constraints)
+    if not has_distance:
+        # Try to infer default distance based on text context
+        if any(word in text for word in ["close", "tight", "together"]):
+            default_distance = 10.0
+        elif any(word in text for word in ["far", "apart", "separate"]):
+            default_distance = 100.0
+        else:
+            default_distance = 50.0
+            
         constraints.append(Constraint(
             type="distance",
-            value=50.0,  # Default 50mm
+            value=default_distance,
             unit="mm",
             references=["part1", "part2"],
-            confidence=0.5
+            confidence=0.3
         ))
     
     return constraints

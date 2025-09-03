@@ -66,58 +66,51 @@ async def generate_assembly(request: AssemblyRequest):
         )
 
 def generate_connector_mock(part1: dict, part2: dict, distance_constraint: dict) -> dict:
-    """Mock connector generation for MVP"""
+    """Enhanced template-based connector generation for MVP"""
     
-    # In a real implementation, this would:
-    # 1. Analyze part geometries and mounting points
-    # 2. Calculate required connector dimensions
-    # 3. Generate 3D connector geometry using FreeCAD
-    # 4. Create assembly with proper positioning
-    # 5. Export STEP files for connector and assembly
+    # Try real connector generation, fallback to mock if unavailable
+    try:
+        return generate_connector_freecad(part1, part2, distance_constraint)
+    except Exception as e:
+        print(f"FreeCAD connector generation failed, using template approach: {e}")
+        return generate_connector_template(part1, part2, distance_constraint)
+
+def generate_connector_template(part1: dict, part2: dict, distance_constraint: dict) -> dict:
+    """Template-based connector generation using predefined designs"""
+    import math
+    import uuid
     
-    # Extract part centers
+    # Extract part centers and bounding boxes
     p1_center = part1.get('geometry', {}).get('center', [0, 0, 0])
     p2_center = part2.get('geometry', {}).get('center', [0, 0, 0])
+    p1_bbox = part1.get('geometry', {}).get('bounding_box', {})
+    p2_bbox = part2.get('geometry', {}).get('bounding_box', {})
     
-    # Calculate distance between parts
-    import math
-    current_distance = math.sqrt(
-        (p2_center[0] - p1_center[0])**2 +
-        (p2_center[1] - p1_center[1])**2 +
-        (p2_center[2] - p1_center[2])**2
-    )
+    # Calculate current distance and direction
+    distance_vector = [p2_center[i] - p1_center[i] for i in range(3)]
+    current_distance = math.sqrt(sum(d**2 for d in distance_vector))
     
-    # Get target distance from constraint
+    # Normalize direction vector
+    if current_distance > 0:
+        direction = [d / current_distance for d in distance_vector]
+    else:
+        direction = [1, 0, 0]  # Default direction
+    
+    # Get target distance and other constraints
     target_distance = distance_constraint.get('value', 50.0)
     
-    # Mock connector design logic
-    if target_distance > current_distance:
-        # Need spacer/extension connector
-        connector_type = "spacer"
-        connector_length = target_distance - current_distance
-    else:
-        # Need mounting bracket
-        connector_type = "bracket"
-        connector_length = target_distance
+    # Determine connector template based on requirements
+    connector_template = determine_connector_template(
+        target_distance, current_distance, direction, p1_bbox, p2_bbox
+    )
     
-    # Generate unique IDs
-    import uuid
+    # Generate connector geometry using template
     connector_id = str(uuid.uuid4())
     assembly_id = str(uuid.uuid4())
     
-    # Mock connector geometry generation
-    connector_geometry = {
-        "type": connector_type,
-        "dimensions": {
-            "length": connector_length,
-            "width": 20.0,  # Default width
-            "height": 10.0  # Default height
-        },
-        "mounting_points": [
-            {"position": p1_center, "type": "bolt_hole", "diameter": 5.0},
-            {"position": p2_center, "type": "bolt_hole", "diameter": 5.0}
-        ]
-    }
+    connector_geometry = generate_connector_from_template(
+        connector_template, p1_center, p2_center, target_distance, direction
+    )
     
     # Cache connector design
     redis_client.setex(
@@ -126,20 +119,10 @@ def generate_connector_mock(part1: dict, part2: dict, distance_constraint: dict)
         json.dumps(connector_geometry)
     )
     
-    # Mock assembly positioning
-    assembly_info = {
-        "part1_position": p1_center,
-        "part2_position": [
-            p1_center[0] + target_distance,
-            p1_center[1],
-            p1_center[2]
-        ],
-        "connector_position": [
-            (p1_center[0] + p2_center[0]) / 2,
-            (p1_center[1] + p2_center[1]) / 2,
-            (p1_center[2] + p2_center[2]) / 2
-        ]
-    }
+    # Calculate assembly positioning
+    assembly_info = calculate_assembly_positioning(
+        p1_center, p2_center, target_distance, direction, connector_geometry
+    )
     
     # Cache assembly info
     redis_client.setex(
@@ -154,6 +137,163 @@ def generate_connector_mock(part1: dict, part2: dict, distance_constraint: dict)
         "connector_geometry": connector_geometry,
         "assembly_info": assembly_info
     }
+
+def determine_connector_template(target_distance, current_distance, direction, p1_bbox, p2_bbox):
+    """Determine which connector template to use based on requirements"""
+    
+    # Template selection logic
+    if target_distance < 20:
+        return "direct_mount"  # Small bolted connection
+    elif target_distance < 50:
+        return "bracket"       # L-bracket or similar
+    elif target_distance < 100:
+        return "spacer"        # Spacer block
+    elif abs(direction[2]) > 0.8:  # Mostly vertical
+        return "vertical_post"  # Vertical mounting post
+    else:
+        return "horizontal_beam"  # Horizontal connecting beam
+
+def generate_connector_from_template(template_type, p1_center, p2_center, target_distance, direction):
+    """Generate connector geometry based on template type"""
+    
+    if template_type == "direct_mount":
+        return {
+            "type": "direct_mount",
+            "template": template_type,
+            "dimensions": {
+                "length": target_distance,
+                "width": min(15.0, target_distance * 0.8),
+                "height": min(10.0, target_distance * 0.5),
+                "bolt_diameter": 5.0,
+                "bolt_spacing": max(10.0, target_distance * 0.3)
+            },
+            "mounting_points": [
+                {"position": p1_center, "type": "bolt_hole", "diameter": 5.0},
+                {"position": p2_center, "type": "bolt_hole", "diameter": 5.0}
+            ],
+            "material": "aluminum",
+            "features": ["bolt_holes", "chamfered_edges"]
+        }
+    
+    elif template_type == "bracket":
+        return {
+            "type": "l_bracket",
+            "template": template_type,
+            "dimensions": {
+                "length": target_distance,
+                "width": max(20.0, target_distance * 0.4),
+                "height": max(15.0, target_distance * 0.3),
+                "thickness": 5.0,
+                "flange_width": max(15.0, target_distance * 0.25)
+            },
+            "mounting_points": [
+                {"position": p1_center, "type": "bolt_hole", "diameter": 6.0},
+                {"position": p2_center, "type": "bolt_hole", "diameter": 6.0},
+                {"position": [(p1_center[0] + p2_center[0])/2, p1_center[1], p1_center[2] - 10], "type": "bolt_hole", "diameter": 6.0}
+            ],
+            "material": "steel",
+            "features": ["reinforcement_ribs", "bolt_holes", "chamfered_edges"]
+        }
+    
+    elif template_type == "spacer":
+        return {
+            "type": "spacer_block",
+            "template": template_type,
+            "dimensions": {
+                "length": target_distance,
+                "width": max(25.0, target_distance * 0.5),
+                "height": max(20.0, target_distance * 0.4),
+                "bore_diameter": 8.0
+            },
+            "mounting_points": [
+                {"position": p1_center, "type": "threaded_hole", "diameter": 8.0, "thread": "M8"},
+                {"position": p2_center, "type": "threaded_hole", "diameter": 8.0, "thread": "M8"}
+            ],
+            "material": "aluminum",
+            "features": ["threaded_bores", "hex_socket"]
+        }
+    
+    elif template_type == "vertical_post":
+        return {
+            "type": "vertical_post",
+            "template": template_type,
+            "dimensions": {
+                "height": target_distance,
+                "diameter": max(20.0, target_distance * 0.2),
+                "base_diameter": max(30.0, target_distance * 0.3),
+                "base_thickness": 10.0
+            },
+            "mounting_points": [
+                {"position": [p1_center[0], p1_center[1], p1_center[2] - 5], "type": "bolt_hole", "diameter": 6.0},
+                {"position": p2_center, "type": "bolt_hole", "diameter": 6.0}
+            ],
+            "material": "steel",
+            "features": ["base_plate", "cylindrical_post", "top_flange"]
+        }
+    
+    else:  # horizontal_beam
+        return {
+            "type": "horizontal_beam",
+            "template": template_type,
+            "dimensions": {
+                "length": target_distance,
+                "width": max(30.0, target_distance * 0.3),
+                "height": max(25.0, target_distance * 0.25),
+                "wall_thickness": 3.0
+            },
+            "mounting_points": [
+                {"position": p1_center, "type": "bolt_hole", "diameter": 8.0},
+                {"position": p2_center, "type": "bolt_hole", "diameter": 8.0},
+                # Additional mounting points for stability
+                {"position": [p1_center[0], p1_center[1], p1_center[2] + 15], "type": "bolt_hole", "diameter": 6.0},
+                {"position": [p2_center[0], p2_center[1], p2_center[2] + 15], "type": "bolt_hole", "diameter": 6.0}
+            ],
+            "material": "aluminum_extrusion",
+            "features": ["hollow_section", "bolt_holes", "end_caps"]
+        }
+
+def calculate_assembly_positioning(p1_center, p2_center, target_distance, direction, connector_geometry):
+    """Calculate final positioning for assembly based on connector"""
+    
+    # Calculate new part2 position to achieve target distance
+    new_p2_position = [
+        p1_center[0] + direction[0] * target_distance,
+        p1_center[1] + direction[1] * target_distance,
+        p1_center[2] + direction[2] * target_distance
+    ]
+    
+    # Connector position (center between parts)
+    connector_position = [
+        (p1_center[0] + new_p2_position[0]) / 2,
+        (p1_center[1] + new_p2_position[1]) / 2,
+        (p1_center[2] + new_p2_position[2]) / 2
+    ]
+    
+    # Adjust based on connector type
+    connector_type = connector_geometry.get("type", "bracket")
+    if connector_type == "vertical_post":
+        # Post sits at part1 location, extends to part2
+        connector_position = p1_center
+    elif connector_type == "l_bracket":
+        # L-bracket might be offset to provide better support
+        connector_position[2] = min(p1_center[2], new_p2_position[2]) - 5
+    
+    return {
+        "part1_position": p1_center,
+        "part2_position": new_p2_position,
+        "connector_position": connector_position,
+        "connector_rotation": [0, 0, 0],  # No rotation for now
+        "assembly_constraints": {
+            "distance_achieved": target_distance,
+            "connector_template": connector_geometry.get("template", "unknown")
+        }
+    }
+
+def generate_connector_freecad(part1: dict, part2: dict, distance_constraint: dict) -> dict:
+    """Real connector generation using FreeCAD (placeholder for future implementation)"""
+    # This would use FreeCAD to generate actual 3D geometry
+    # For now, fall back to template method
+    raise Exception("FreeCAD connector generation not implemented yet")
 
 @app.get("/connector/{connector_id}")
 async def get_connector(connector_id: str):

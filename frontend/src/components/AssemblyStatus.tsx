@@ -1,5 +1,6 @@
 import React from 'react';
 import { AssemblyResult } from '../types/assembly';
+import { AssemblyViewer } from './AssemblyViewer';
 
 interface AssemblyStatusProps {
   result: AssemblyResult | null;
@@ -97,6 +98,15 @@ export const AssemblyStatus: React.FC<AssemblyStatusProps> = ({
               </span>
             </div>
           ))}
+        </div>
+      )}
+
+      {(result.status === 'completed' || result.status === 'processing') && (
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>
+            Assembly Preview:
+          </div>
+          <AssemblyViewer assembly={result} width={560} height={350} />
         </div>
       )}
 

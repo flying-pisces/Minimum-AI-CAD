@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { FileUpload } from './components/FileUpload';
 import { ConstraintInput } from './components/ConstraintInput';
 import { AssemblyStatus } from './components/AssemblyStatus';
+import { StepViewer } from './components/StepViewer';
 import { UploadedFile, AssemblyResult } from './types/assembly';
 import { api } from './services/api';
 import { saveAs } from 'file-saver';
@@ -124,6 +125,9 @@ function App() {
               ✓ {part1.name} ({(part1.size / 1024).toFixed(1)} KB)
             </div>
           )}
+          <div style={{ marginTop: '12px' }}>
+            <StepViewer file={part1} width={300} height={200} />
+          </div>
         </div>
 
         <div>
@@ -145,6 +149,9 @@ function App() {
               ✓ {part2.name} ({(part2.size / 1024).toFixed(1)} KB)
             </div>
           )}
+          <div style={{ marginTop: '12px' }}>
+            <StepViewer file={part2} width={300} height={200} />
+          </div>
         </div>
       </div>
 
